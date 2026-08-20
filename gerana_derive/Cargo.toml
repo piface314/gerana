@@ -1,0 +1,18 @@
+[package]
+name = "gerana_derive"
+version = "0.1.0"
+description = ""
+repository = "https://github.com/piface314/gerana/tree/main/gerana_derive"
+license.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+include.workspace = true
+
+[lib]
+proc-macro = true
+bench = false
+
+[dependencies]
+syn = { version = "3.0.3", features = ["full", "extra-traits"] }
+quote = "1.0.9"
+proc-macro2 = "1.0.69"

@@ -1,0 +1,28 @@
+[workspace]
+resolver = "2"
+members = ["gerana_derive"]
+
+[workspace.package]
+license = "MIT OR Apache-2.0"
+edition = "2021"
+rust-version = "1.97"
+include = [
+    "build.rs",
+    "src/**/*",
+    "Cargo.toml",
+    "LICENSE*",
+    "README.md",
+    "benches/**/*",
+    "examples/**/*",
+]
+
+[package]
+name = "gerana"
+version = "0.1.0"
+edition = "2024"
+authros = ["piface314"]
+
+[dependencies]
+gerana_derive = { path = "./gerana_derive" }
+logos = "0.16.1"
+thiserror = "2.0.20"
