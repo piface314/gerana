@@ -97,7 +97,7 @@ impl std::fmt::Display for Expr {
 }
 
 #[derive(Parser, Debug)]
-#[output(Expr)]
+#[gerana(output = Expr)]
 #[rule(E => E(a) :Plus T(b) { a + b } )]
 #[rule(E => T(a) { a } )]
 #[rule(T => T(a) :Times F(b) { a * b } )]
@@ -113,7 +113,9 @@ struct SampleParser<'s> {
 fn main() -> Result<(), Box<dyn Error>> {
     let e1 = SampleParser::new("(a + b) * c").parse()?;
     println!("{e1:?}");
-    let e1 = SampleParser::new("a + b * c").parse()?;
-    println!("{e1:?}");
+    let e2 = SampleParser::new("a + b * c").parse()?;
+    println!("{e2:?}");
+    let e3 = SampleParser::new("a + b d").parse().inspect_err(|e| eprintln!("{e}"));
+    println!("{e3:?}");
     Ok(())
 }

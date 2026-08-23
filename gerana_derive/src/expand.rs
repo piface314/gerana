@@ -4,6 +4,7 @@ use crate::data::{
 };
 use proc_macro2::TokenStream;
 use quote::{quote, ToTokens};
+use syn::Token;
 
 pub fn derive_parser(ast: &syn::DeriveInput) -> syn::Result<TokenStream> {
     let data = match &ast.data {
@@ -44,13 +45,13 @@ pub fn derive_parser(ast: &syn::DeriveInput) -> syn::Result<TokenStream> {
     let (symbol_stack, symbol_ty) = get_symbol_stack(fields)?;
     let state_stack = get_state_stack(fields)?;
 
-    let output_ty = if let Some(e) = get_declared_param_type(ast, "output").transpose()? {
+    let output_ty = if let Some(e) = get_declared_param_type(ast, "output")? {
         e.to_token_stream()
     } else {
         quote!(())
     };
 
-    let error_ty = if let Some(e) = get_declared_param_type(ast, "error").transpose()? {
+    let error_ty = if let Some(e) = get_declared_param_type(ast, "error")? {
         e.to_token_stream()
     } else {
         quote!(::gerana::NoError)
@@ -236,8 +237,7 @@ fn get_lexers<'a>(
     let mut token_ty = None;
     for f in fields.named.iter() {
         let f_ident = f.ident.as_ref().expect("struct with named field");
-        let is_lexer = f_ident == "lexer" || f.attrs.iter().any(|att| att.path().is_ident("lexer"));
-        if !is_lexer {
+        if f_ident != "lexer" && !is_tagged_as(f, "lexer")? {
             continue;
         }
         if lexers.is_empty() {
@@ -249,10 +249,27 @@ fn get_lexers<'a>(
         lexers.push(f_ident);
     }
     if lexers.is_empty() {
-        Err(syn::Error::new_spanned(fields, "a lexer must be specified by either naming a field as `lexer` or using the `#[lexer]` attribute"))
+        Err(syn::Error::new_spanned(fields, "a lexer must be specified by either naming a field as `lexer` or using `#[gerana(lexer)]`"))
     } else {
         Ok((lexers, token_ty.expect("previously checked")))
     }
+}
+
+fn iter_attrs<'a>(attrs: &'a Vec<syn::Attribute>) -> impl Iterator<Item = &'a syn::Attribute> {
+    attrs.iter().filter(|att| att.path().is_ident("gerana"))
+}
+
+fn is_tagged_as(f: &syn::Field, tag: &'static str) -> syn::Result<bool> {
+    for att in iter_attrs(&f.attrs) {
+        if att
+            .parse_args::<syn::Ident>()
+            .map(|ident| ident == tag)
+            .unwrap_or(false)
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 fn ensure_current_lexer_field<'a>(fields: &'a syn::FieldsNamed) -> syn::Result<()> {
@@ -279,23 +296,29 @@ fn get_symbol_stack<'a>(
         .filter_map(|f| {
             let f_ident = f.ident.as_ref().expect("struct with named field");
             let is_stack = f_ident == "symbol_stack"
-                || f.attrs
-                    .iter()
-                    .any(|att| att.path().is_ident("symbol_stack"));
+                || match is_tagged_as(f, "symbol_stack") {
+                    Ok(b) => b,
+                    Err(e) => return Some(Err(e)),
+                };
             if is_stack {
                 let ty = get_type_param_from_field(f, 0)?;
-                Some((f_ident, ty))
+                Some(Ok((f_ident, ty)))
             } else {
                 None
             }
         })
-        .collect();
+        .collect::<Result<_, _>>()?;
     if results.len() == 1 {
         Ok(results[0])
+    } else if results.is_empty() {
+        Err(syn::Error::new_spanned(
+            fields,
+            "a single symbol_stack must be defined",
+        ))
     } else {
         Err(syn::Error::new_spanned(
             results[1].0,
-            "only a single symbol_stack must be defined",
+            "a single symbol_stack must be defined",
         ))
     }
 }
@@ -307,36 +330,59 @@ fn get_state_stack<'a>(fields: &'a syn::FieldsNamed) -> syn::Result<&'a syn::Ide
         .filter_map(|f| {
             let f_ident = f.ident.as_ref().expect("struct with named field");
             let is_stack = f_ident == "state_stack"
-                || f.attrs.iter().any(|att| att.path().is_ident("state_stack"));
+                || match is_tagged_as(f, "state_stack") {
+                    Ok(b) => b,
+                    Err(e) => return Some(Err(e)),
+                };
             if is_stack {
-                Some(f_ident)
+                Some(Ok(f_ident))
             } else {
                 None
             }
         })
-        .collect();
+        .collect::<Result<_, _>>()?;
     if results.len() == 1 {
         Ok(results[0])
+    } else if results.is_empty() {
+        Err(syn::Error::new_spanned(
+            fields,
+            "a single state_stack must be defined",
+        ))
     } else {
         Err(syn::Error::new_spanned(
             results[1],
-            "only a single state_stack must be defined",
+            "a single state_stack must be defined",
         ))
+    }
+}
+
+struct NamedParam {
+    name: syn::Ident,
+    #[allow(unused)]
+    eq_token: Token![=],
+    ty: syn::TypePath,
+}
+
+impl syn::parse::Parse for NamedParam {
+    fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
+        let name = input.parse()?;
+        let eq_token = input.parse()?;
+        let ty = input.parse()?;
+        Ok(Self { name, eq_token, ty })
     }
 }
 
 fn get_declared_param_type(
     ast: &syn::DeriveInput,
     param: &str,
-) -> Option<syn::Result<syn::TypePath>> {
-    ast.attrs
-        .iter()
-        .filter(|att| att.path().is_ident(param))
-        .next()
-        .map(|att| {
-            let meta_list = att.meta.require_list()?;
-            meta_list.parse_args()
-        })
+) -> syn::Result<Option<syn::TypePath>> {
+    for att in iter_attrs(&ast.attrs) {
+        let np = att.parse_args::<NamedParam>()?;
+        if np.name == param {
+            return Ok(Some(np.ty));
+        }
+    }
+    Ok(None)
 }
 
 fn get_type_param_from_field<'a>(f: &'a syn::Field, arg_index: usize) -> Option<&'a syn::TypePath> {
