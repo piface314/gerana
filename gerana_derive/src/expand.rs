@@ -174,14 +174,6 @@ pub fn derive_parser(ast: &syn::DeriveInput) -> syn::Result<TokenStream> {
         }
 
         impl #generics #ty #generics {
-            fn pop_symbols(&mut self, n: usize) -> Vec<#symbol_ty> {
-                let mut symbols = Vec::new();
-                for _ in 0..n {
-                    symbols.push(self.#symbol_stack.pop().unwrap());
-                }
-                symbols
-            }
-
             fn goto(state: usize, symbol: &#symbol_ty) -> usize {
                 match (state, symbol) {
                     #(#gotos),*,
