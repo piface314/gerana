@@ -20,12 +20,7 @@ pub fn derive_parser(ast: &syn::DeriveInput) -> syn::Result<TokenStream> {
             "expected struct with named fields",
         )),
     }?;
-    let mut rules: Vec<Rule> = Vec::with_capacity(ast.attrs.len());
-    for att in ast.attrs.iter() {
-        if att.path().is_ident("rule") {
-            rules.push(att.parse_args::<RuleP>()?.into());
-        }
-    }
+    let rules: Vec<Rule> = get_rules(ast)?;
     let grammar = ContextFreeGrammar::new(ast, rules.as_slice())?;
     let memo_first = MemoFirst::new(&grammar)?;
     let memo_follow = MemoFollow::new(&grammar, &memo_first)?;
@@ -34,11 +29,7 @@ pub fn derive_parser(ast: &syn::DeriveInput) -> syn::Result<TokenStream> {
 
     let ty = &ast.ident;
     let generics = &ast.generics;
-    let lt = ast
-        .generics
-        .lifetimes()
-        .next()
-        .ok_or_else(|| syn::Error::new_spanned(&ast.generics, "message"))?;
+    let lt = get_lifetime_param(ast)?;
 
     let (lexers, token_ty) = get_lexers(fields)?;
     let lexers_init = lexers
@@ -98,6 +89,8 @@ pub fn derive_parser(ast: &syn::DeriveInput) -> syn::Result<TokenStream> {
             }
         }
     });
+
+    let errors = error_arms(token_ty, &slr_table);
 
     let gotos = slr_table.goto.iter().map(|((i, v), j)| {
         let var_ident = grammar.variables[v];
@@ -161,10 +154,10 @@ pub fn derive_parser(ast: &syn::DeriveInput) -> syn::Result<TokenStream> {
 
             fn parse(mut self) -> Result<Self::Output, ::gerana::ParseError<Self::Error>> {
                 let mut token = self.next_token()?;
-                let src = self.#default_lexer.source();
                 while let Some(state) = self.#state_stack.last() {
                     match (state, token.as_ref()) {
                         #(#actions)*
+                        #(#errors)*
                         _ => return Err(
                             ::gerana::ParseError::syntax(self.span())
                         ),
@@ -221,6 +214,27 @@ pub fn derive_parser(ast: &syn::DeriveInput) -> syn::Result<TokenStream> {
             }
         }
     })
+}
+
+fn get_rules(ast: &syn::DeriveInput) -> syn::Result<Vec<Rule>> {
+    ast.attrs
+        .iter()
+        .filter_map(|att| {
+            if att.path().is_ident("rule") {
+                let rule_p: syn::Result<RuleP> = att.parse_args();
+                Some(rule_p.map(|r| r.into()))
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
+fn get_lifetime_param(ast: &syn::DeriveInput) -> syn::Result<&syn::LifetimeParam> {
+    ast.generics
+        .lifetimes()
+        .next()
+        .ok_or_else(|| syn::Error::new_spanned(&ast.generics, "expected a lifetime parameter"))
 }
 
 fn get_lexers<'a>(
@@ -462,4 +476,24 @@ fn implement_lexer_methods<'a>(
             }
         }
     }
+}
+
+fn error_arms<'r>(
+    token_ty: &'r syn::TypePath,
+    slr_table: &'r SlrTable<'r>,
+) -> impl Iterator<Item = TokenStream> + 'r {
+    slr_table.expected_inputs().map(move |(s, inputs)| {
+        let expected = inputs.iter().copied().map(|input| {
+            if input == "$" {
+                quote!("end of input")
+            } else {
+                quote!(#token_ty::describe(#input))
+            }
+        });
+        quote! {
+            (#s, _) => {
+                return Err(::gerana::ParseError::syntax_expecting([#(#expected),*], self.span()))
+            }
+        }
+    })
 }
