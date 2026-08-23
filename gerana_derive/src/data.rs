@@ -5,21 +5,21 @@ const EMPTY: &'static str = "";
 const END: &'static str = "$";
 
 pub struct ContextFreeGrammar<'r> {
-    variables: HashSet<&'r str>,
-    alphabet: HashSet<&'r str>,
-    rules: &'r [Rule],
-    start_variable: &'r str,
-    rule_head_index: HashMap<&'r str, Vec<(usize, &'r Rule)>>,
+    pub variables: HashMap<&'r str, &'r syn::Ident>,
+    pub alphabet: HashMap<&'r str, &'r Terminal>,
+    pub rules: &'r [Rule],
+    pub start_variable: &'r str,
+    pub rule_head_index: HashMap<&'r str, Vec<(usize, &'r Rule)>>,
 }
 
 impl<'r> ContextFreeGrammar<'r> {
-    pub fn new(ast: &syn::DeriveInput, rules: &'r [Rule]) -> Result<Self, syn::Error> {
+    pub fn new(ast: &syn::DeriveInput, rules: &'r [Rule]) -> syn::Result<Self> {
         let variables = rules
             .iter()
-            .map(|r| r.head.as_str())
+            .map(|r| (r.head.as_str(), &r.head_ident))
             .chain(rules.iter().flat_map(|r| {
                 r.body.iter().filter_map(|e| match e {
-                    Symbol::Var(v) => Some(v.name.as_str()),
+                    Symbol::Var(v) => Some((v.name.as_str(), &v.name_ident)),
                     _ => None,
                 })
             }))
@@ -28,7 +28,7 @@ impl<'r> ContextFreeGrammar<'r> {
             .iter()
             .flat_map(|r| {
                 r.body.iter().filter_map(|e| match e {
-                    Symbol::Term(t) => Some(t.name.as_str()),
+                    Symbol::Term(t) => Some((t.name.as_str(), t)),
                     _ => None,
                 })
             })
@@ -55,10 +55,10 @@ impl<'r> ContextFreeGrammar<'r> {
 
     fn symbols(&'_ self) -> impl Iterator<Item = SymbolRef<'_>> {
         self.variables
-            .iter()
+            .keys()
             .copied()
             .map(SymbolRef::Var)
-            .chain(self.alphabet.iter().copied().map(SymbolRef::Term))
+            .chain(self.alphabet.keys().copied().map(SymbolRef::Term))
     }
 }
 
@@ -66,7 +66,7 @@ impl<'r> ContextFreeGrammar<'r> {
 pub struct MemoFirst<'r>(HashMap<&'r str, HashSet<&'r str>>);
 
 impl<'r> MemoFirst<'r> {
-    pub fn new(grammar: &ContextFreeGrammar<'r>) -> Result<Self, syn::Error> {
+    pub fn new(grammar: &ContextFreeGrammar<'r>) -> syn::Result<Self> {
         let mut memo = HashMap::new();
         let mut visited = HashSet::new();
         for v in grammar.rule_head_index.keys() {
@@ -81,7 +81,7 @@ impl<'r> MemoFirst<'r> {
         rule_head_index: &HashMap<&'r str, Vec<(usize, &'r Rule)>>,
         memo: &mut HashMap<&'r str, HashSet<&'r str>>,
         visited: &mut HashSet<usize>,
-    ) -> Result<usize, syn::Error> {
+    ) -> syn::Result<usize> {
         let mut checked_rules = 0;
         for (i, r) in rule_head_index
             .get(var)
@@ -149,7 +149,7 @@ impl<'r> MemoFirst<'r> {
         Ok(checked_rules)
     }
 
-    pub fn first(&self, seq: &'r [Symbol]) -> Result<HashSet<&'r str>, syn::Error> {
+    pub fn first(&self, seq: &'r [Symbol]) -> syn::Result<HashSet<&'r str>> {
         let mut first_seq = HashSet::new();
         for x in seq {
             match x {
@@ -176,12 +176,9 @@ impl<'r> MemoFirst<'r> {
 pub struct MemoFollow<'r>(HashMap<&'r str, HashSet<&'r str>>);
 
 impl<'r> MemoFollow<'r> {
-    pub fn new(
-        grammar: &ContextFreeGrammar<'r>,
-        memo_first: &MemoFirst<'r>,
-    ) -> Result<Self, syn::Error> {
+    pub fn new(grammar: &ContextFreeGrammar<'r>, memo_first: &MemoFirst<'r>) -> syn::Result<Self> {
         let mut memo = HashMap::new();
-        for v in grammar.variables.iter().copied() {
+        for v in grammar.variables.keys().copied() {
             memo.insert(v, HashSet::new());
         }
         memo.entry(grammar.start_variable).or_default().insert(END);
@@ -193,7 +190,7 @@ impl<'r> MemoFollow<'r> {
         grammar: &ContextFreeGrammar<'r>,
         memo: &mut HashMap<&'r str, HashSet<&'r str>>,
         memo_first: &MemoFirst<'r>,
-    ) -> Result<bool, syn::Error> {
+    ) -> syn::Result<bool> {
         let mut added: usize = 0;
         for rule in grammar.rules {
             for (i, x) in rule.body.iter().enumerate() {
@@ -244,7 +241,7 @@ impl<'r> MemoFollow<'r> {
         &'_ self,
         var: &str,
         var_ident: &syn::Ident,
-    ) -> Result<&'_ HashSet<&'r str>, syn::Error> {
+    ) -> syn::Result<&'_ HashSet<&'r str>> {
         self.0
             .get(var)
             .ok_or_else(|| syn::Error::new_spanned(var_ident, "something wrong with this variable"))
@@ -253,19 +250,19 @@ impl<'r> MemoFollow<'r> {
 
 #[derive(Debug)]
 pub struct LrZeroAutomaton<'r> {
-    states: Vec<LrZeroState>,
-    goto: HashMap<(usize, SymbolRef<'r>), usize>,
+    pub states: Vec<LrZeroState>,
+    pub goto: HashMap<(usize, SymbolRef<'r>), usize>,
 }
 
 #[derive(Debug)]
 pub struct LrZeroState {
-    items: BTreeSet<LrZeroItem>,
+    pub items: BTreeSet<LrZeroItem>,
 }
 
 #[derive(Debug, Hash, PartialEq, Eq, PartialOrd, Ord, Clone, Copy)]
 pub struct LrZeroItem {
-    pointer: usize,
-    rule: LrZeroRule,
+    pub pointer: usize,
+    pub rule: LrZeroRule,
 }
 
 #[derive(Debug, Hash, PartialEq, Eq, PartialOrd, Ord, Clone, Copy)]
@@ -275,41 +272,48 @@ pub enum LrZeroRule {
 }
 
 impl<'r> LrZeroAutomaton<'r> {
-    pub const MAX_ITERATIONS: usize = 10_000;
+    const MAX_ITERATIONS: usize = 10_000;
 
-    pub fn new(grammar: &'r ContextFreeGrammar<'r>) -> Result<Self, syn::Error> {
+    pub fn new(grammar: &'r ContextFreeGrammar<'r>) -> syn::Result<Self> {
         let mut this = Self {
             states: vec![LrZeroState::closure([LrZeroItem::new_start()], grammar)],
             goto: Default::default(),
         };
-        let mut states_set = HashSet::from([this.states[0].items.clone()]);
+        let mut states_set = HashMap::from([(this.states[0].items.clone(), 0)]);
         let mut n_iterations = 0;
         loop {
             let n_start = this.states.len();
             for i in 0..n_start {
                 for x in grammar.symbols() {
                     let goto = this.states[i].goto(x, grammar);
-                    if !goto.is_empty() && !states_set.contains(&goto) {
-                        let new_state_index = this.states.len();
+                    if goto.is_empty() {
+                        continue;
+                    }
+                    let j = if let Some(j) = states_set.get(&goto) {
+                        *j
+                    } else {
+                        let j = this.states.len();
                         this.states
                             .push(LrZeroState::closure(goto.clone(), grammar));
-                        states_set.insert(goto);
-                        this.goto.insert((i, x), new_state_index);
-                    }
+                        states_set.insert(goto, j);
+                        j
+                    };
+                    this.goto.insert((i, x), j);
                 }
             }
+            n_iterations += 1;
             if this.states.len() == n_start {
                 return Ok(this);
-            } else if n_iterations > Self::MAX_ITERATIONS {
+            } else if n_iterations >= Self::MAX_ITERATIONS {
                 return Err(syn::Error::new_spanned(
                     None as Option<syn::Ident>,
                     "exceeded maximum iterations for grammar LR(0) automaton construction",
                 ));
             }
-            n_iterations += 1;
         }
     }
 
+    #[allow(unused)]
     pub fn display_with_grammar(
         &self,
         f: &mut impl std::io::Write,
@@ -421,6 +425,7 @@ impl LrZeroItem {
         }
     }
 
+    #[allow(unused)]
     fn display_with_grammar(
         &self,
         f: &mut impl std::io::Write,
@@ -453,8 +458,8 @@ impl LrZeroItem {
 
 #[derive(Debug)]
 pub struct SlrTable<'r> {
-    action: HashMap<(usize, &'r str), SlrAction>,
-    goto: HashMap<(usize, &'r str), usize>,
+    pub action: HashMap<(usize, &'r str), SlrAction>,
+    pub goto: HashMap<(usize, &'r str), usize>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -469,7 +474,7 @@ impl<'r> SlrTable<'r> {
         grammar: &'r ContextFreeGrammar<'r>,
         memo_follow: &'r MemoFollow<'r>,
         lrz_automaton: LrZeroAutomaton<'r>,
-    ) -> Result<Self, syn::Error> {
+    ) -> syn::Result<Self> {
         let mut this = Self { action: Default::default(), goto: Default::default() };
         for (i, state) in lrz_automaton.states.into_iter().enumerate() {
             for item in state.items.into_iter() {
@@ -505,7 +510,7 @@ impl<'r> SlrTable<'r> {
         Ok(this)
     }
 
-    fn set_action(&mut self, i: usize, t: &'r str, action: SlrAction) -> Result<(), syn::Error> {
+    fn set_action(&mut self, i: usize, t: &'r str, action: SlrAction) -> syn::Result<()> {
         match self.action.insert((i, t), action) {
             None => Ok(()),
             Some(prev_action) => {
@@ -523,6 +528,7 @@ impl<'r> SlrTable<'r> {
 }
 
 impl SlrAction {
+    #[inline]
     fn is_shift(&self) -> bool {
         match self {
             Self::Shift(_) => true,
@@ -530,6 +536,7 @@ impl SlrAction {
         }
     }
 
+    #[inline]
     fn is_reduce(&self) -> bool {
         match self {
             Self::Reduce(_) => true,
@@ -540,19 +547,19 @@ impl SlrAction {
 
 #[derive(Debug)]
 pub struct RuleP {
-    head: syn::Ident,
+    pub head: syn::Ident,
     #[allow(unused)]
-    arrow_token: Token![=>],
-    body: Vec<SymbolP>,
-    action: syn::ExprBlock,
+    pub arrow_token: Token![=>],
+    pub body: Vec<SymbolP>,
+    pub action: syn::ExprBlock,
 }
 
 #[derive(Debug)]
 pub struct Rule {
-    head: String,
-    head_ident: syn::Ident,
-    body: Vec<Symbol>,
-    action: syn::ExprBlock,
+    pub head: String,
+    pub head_ident: syn::Ident,
+    pub body: Vec<Symbol>,
+    pub action: syn::ExprBlock,
 }
 
 impl From<RuleP> for Rule {
@@ -699,15 +706,15 @@ impl syn::parse::Parse for SymbolP {
 
 #[derive(Debug)]
 pub struct VariableP {
-    name: syn::Ident,
-    binding: Binding,
+    pub name: syn::Ident,
+    pub binding: Binding,
 }
 
 #[derive(Debug)]
 pub struct Variable {
-    name: String,
-    name_ident: syn::Ident,
-    binding: Binding,
+    pub name: String,
+    pub name_ident: syn::Ident,
+    pub binding: Binding,
 }
 
 impl From<VariableP> for Variable {
@@ -745,16 +752,16 @@ impl syn::parse::Parse for VariableP {
 #[derive(Debug)]
 pub struct TerminalP {
     #[allow(unused)]
-    marker_token: Token![:],
-    name: syn::Ident,
-    binding: Option<Binding>,
+    pub marker_token: Token![:],
+    pub name: syn::Ident,
+    pub binding: Option<Binding>,
 }
 
 #[derive(Debug)]
 pub struct Terminal {
-    name: String,
-    name_ident: syn::Ident,
-    binding: Option<Binding>,
+    pub name: String,
+    pub name_ident: syn::Ident,
+    pub binding: Option<Binding>,
 }
 
 impl From<TerminalP> for Terminal {
@@ -783,9 +790,9 @@ impl syn::parse::Parse for TerminalP {
 #[derive(Debug)]
 pub struct Binding {
     #[allow(unused)]
-    paren: syn::token::Paren,
-    mut_token: Option<Token![mut]>,
-    ident: syn::Ident,
+    pub paren: syn::token::Paren,
+    pub mut_token: Option<Token![mut]>,
+    pub ident: syn::Ident,
 }
 
 impl syn::parse::Parse for Binding {
@@ -799,5 +806,14 @@ impl syn::parse::Parse for Binding {
         };
         let ident = content.parse()?;
         Ok(Self { paren, mut_token, ident })
+    }
+}
+
+impl quote::ToTokens for Binding {
+    fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
+        if let Some(mut_token) = self.mut_token.as_ref() {
+            mut_token.to_tokens(tokens);
+        }
+        self.ident.to_tokens(tokens);
     }
 }
