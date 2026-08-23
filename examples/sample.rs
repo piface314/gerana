@@ -1,4 +1,4 @@
-use gerana::{Describe, Parser};
+use gerana::{Parser, Symbol, Terminal, Variable};
 use gerana_derive::Parser;
 use logos::{Lexer, Logos};
 use std::error::Error;
@@ -18,7 +18,7 @@ enum SampleToken {
     Id(String),
 }
 
-impl Describe for SampleToken {
+impl Terminal for SampleToken {
     fn describe(variant: &'static str) -> &'static str {
         match variant {
             "Plus" => "`+`",
@@ -42,27 +42,14 @@ fn unescape_ident(lex: &Lexer<SampleToken>) -> String {
 }
 
 #[derive(Debug)]
-enum SampleSymbol {
+enum SampleVar {
     E(Expr),
     T(Expr),
     F(Expr),
-    Token(SampleToken),
 }
 
-impl From<SampleToken> for SampleSymbol {
-    fn from(value: SampleToken) -> Self {
-        Self::Token(value)
-    }
-}
-
-impl TryFrom<SampleSymbol> for SampleToken {
-    type Error = ();
-    fn try_from(value: SampleSymbol) -> Result<Self, Self::Error> {
-        match value {
-            SampleSymbol::Token(t) => Ok(t),
-            _ => Err(()),
-        }
-    }
+impl Variable for SampleVar {
+    type Output = Expr;
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -97,7 +84,6 @@ impl std::fmt::Display for Expr {
 }
 
 #[derive(Parser, Debug)]
-#[gerana(output = Expr)]
 #[rule(E => E(a) :Plus T(b) { a + b } )]
 #[rule(E => T(a) { a } )]
 #[rule(T => T(a) :Times F(b) { a * b } )]
@@ -105,7 +91,7 @@ impl std::fmt::Display for Expr {
 #[rule(F => :ParenOp E(a) :ParenCl { a } )]
 #[rule(F => :Id(a) { Expr::Id(a) } )]
 struct SampleParser<'s> {
-    symbol_stack: Vec<SampleSymbol>,
+    symbol_stack: Vec<Symbol<SampleVar, SampleToken>>,
     state_stack: Vec<usize>,
     lexer: Lexer<'s, SampleToken>,
 }

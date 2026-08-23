@@ -6,6 +6,22 @@ use proc_macro2::TokenStream;
 use quote::{quote, ToTokens};
 use syn::Token;
 
+struct NamedParam {
+    name: syn::Ident,
+    #[allow(unused)]
+    eq_token: Token![=],
+    ty: syn::TypePath,
+}
+
+impl syn::parse::Parse for NamedParam {
+    fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
+        let name = input.parse()?;
+        let eq_token = input.parse()?;
+        let ty = input.parse()?;
+        Ok(Self { name, eq_token, ty })
+    }
+}
+
 pub fn derive_parser(ast: &syn::DeriveInput) -> syn::Result<TokenStream> {
     let data = match &ast.data {
         syn::Data::Struct(data) => Ok(data),
@@ -42,14 +58,8 @@ pub fn derive_parser(ast: &syn::DeriveInput) -> syn::Result<TokenStream> {
     } else {
         None
     };
-    let (symbol_stack, symbol_ty) = get_symbol_stack(fields)?;
+    let (symbol_stack, var_ty) = get_symbol_stack(fields)?;
     let state_stack = get_state_stack(fields)?;
-
-    let output_ty = if let Some(e) = get_declared_param_type(ast, "output")? {
-        e.to_token_stream()
-    } else {
-        quote!(())
-    };
 
     let error_ty = if let Some(e) = get_declared_param_type(ast, "error")? {
         e.to_token_stream()
@@ -95,7 +105,7 @@ pub fn derive_parser(ast: &syn::DeriveInput) -> syn::Result<TokenStream> {
 
     let gotos = slr_table.goto.iter().map(|((i, v), j)| {
         let var_ident = grammar.variables[v];
-        quote!((#i, #symbol_ty::#var_ident(_)) => #j)
+        quote!((#i, ::gerana::Symbol::Var(#var_ty::#var_ident(_))) => #j)
     });
 
     let reductions = grammar.rules.iter().enumerate().map(|(rule_index, rule)| {
@@ -105,8 +115,8 @@ pub fn derive_parser(ast: &syn::DeriveInput) -> syn::Result<TokenStream> {
                     if let Some(binding) = terminal.binding.as_ref() {
                         let terminal_ident = &terminal.name_ident;
                         quote! {
-                            let #binding = match #token_ty::try_from(self.#symbol_stack.pop().unwrap()) {
-                                Ok(#token_ty::#terminal_ident(x)) => x,
+                            let #binding = match self.#symbol_stack.pop().unwrap() {
+                                ::gerana::Symbol::Term(#token_ty::#terminal_ident(x)) => x,
                                 _ => unreachable!("invalid token"),
                             };
                         }
@@ -119,7 +129,7 @@ pub fn derive_parser(ast: &syn::DeriveInput) -> syn::Result<TokenStream> {
                     let binding = &variable.binding;
                     quote! {
                         let #binding = match self.#symbol_stack.pop().unwrap() {
-                            #symbol_ty::#var_ident(x) => x,
+                            ::gerana::Symbol::Var(#var_ty::#var_ident(x)) => x,
                             _ => unreachable!("invalid variable"),
                         };
                     }
@@ -132,16 +142,15 @@ pub fn derive_parser(ast: &syn::DeriveInput) -> syn::Result<TokenStream> {
             #rule_index => {
                 #(#bindings)*
                 let output = #action;
-                Ok(#symbol_ty::#head_ident(output))
+                Ok(::gerana::Symbol::Var(#var_ty::#head_ident(output)))
             }
         }
     });
 
     Ok(quote! {
         impl #generics ::gerana::Parser<#lt> for #ty #generics {
-            type Token = #token_ty;
-            type Symbol = #symbol_ty;
-            type Output = #output_ty;
+            type Terminal = #token_ty;
+            type Variable = #var_ty;
             type Error = #error_ty;
 
             fn new(source: &#lt str) -> Self {
@@ -153,7 +162,7 @@ pub fn derive_parser(ast: &syn::DeriveInput) -> syn::Result<TokenStream> {
                 }
             }
 
-            fn parse(mut self) -> Result<Self::Output, ::gerana::ParseError<Self::Error>> {
+            fn parse(mut self) -> Result<<Self::Variable as ::gerana::Variable>::Output, ::gerana::ParseError<Self::Error>> {
                 let mut token = self.next_token()?;
                 while let Some(state) = self.#state_stack.last() {
                     match (state, token.as_ref()) {
@@ -164,7 +173,7 @@ pub fn derive_parser(ast: &syn::DeriveInput) -> syn::Result<TokenStream> {
                         ),
                     }
                 }
-                if let Some(#symbol_ty::#start_var(out)) = self.#symbol_stack.pop() {
+                if let Some(::gerana::Symbol::Var(#var_ty::#start_var(out))) = self.#symbol_stack.pop() {
                     Ok(out)
                 } else {
                     Err(::gerana::ParseError::syntax(self.span()))
@@ -175,7 +184,7 @@ pub fn derive_parser(ast: &syn::DeriveInput) -> syn::Result<TokenStream> {
         }
 
         impl #generics #ty #generics {
-            fn goto(state: usize, symbol: &#symbol_ty) -> usize {
+            fn goto(state: usize, symbol: &::gerana::Symbol<#var_ty, #token_ty>) -> usize {
                 match (state, symbol) {
                     #(#gotos),*,
                     _ => unreachable!("invalid state transition {state:?} {symbol:?}"),
@@ -185,7 +194,7 @@ pub fn derive_parser(ast: &syn::DeriveInput) -> syn::Result<TokenStream> {
             fn shift(&mut self, token: &mut Option<#token_ty>, next_state: usize) -> Result<(), ::gerana::ParseError<#error_ty>> {
                 let t = ::std::mem::take(token).unwrap();
                 *token = self.next_token()?;
-                self.#symbol_stack.push(#symbol_ty::from(t));
+                self.#symbol_stack.push(::gerana::Symbol::Term(t));
                 self.#state_stack.push(next_state);
                 Ok(())
             }
@@ -199,7 +208,7 @@ pub fn derive_parser(ast: &syn::DeriveInput) -> syn::Result<TokenStream> {
                 Ok(())
             }
 
-            fn synthesize(&mut self, rule_index: usize) -> Result<#symbol_ty, ::gerana::ParseError<#error_ty>> {
+            fn synthesize(&mut self, rule_index: usize) -> Result<::gerana::Symbol<#var_ty, #token_ty>, ::gerana::ParseError<#error_ty>> {
                 match rule_index {
                     #(#reductions)*
                     _ => unreachable!("invalid reduction"),
@@ -301,7 +310,8 @@ fn get_symbol_stack<'a>(
                     Err(e) => return Some(Err(e)),
                 };
             if is_stack {
-                let ty = get_type_param_from_field(f, 0)?;
+                let outer_symbol_ty = get_type_param_from_field(f, 0)?;
+                let ty = get_type_param_from_type(&outer_symbol_ty, 0)?;
                 Some(Ok((f_ident, ty)))
             } else {
                 None
@@ -356,22 +366,6 @@ fn get_state_stack<'a>(fields: &'a syn::FieldsNamed) -> syn::Result<&'a syn::Ide
     }
 }
 
-struct NamedParam {
-    name: syn::Ident,
-    #[allow(unused)]
-    eq_token: Token![=],
-    ty: syn::TypePath,
-}
-
-impl syn::parse::Parse for NamedParam {
-    fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
-        let name = input.parse()?;
-        let eq_token = input.parse()?;
-        let ty = input.parse()?;
-        Ok(Self { name, eq_token, ty })
-    }
-}
-
 fn get_declared_param_type(
     ast: &syn::DeriveInput,
     param: &str,
@@ -390,6 +384,10 @@ fn get_type_param_from_field<'a>(f: &'a syn::Field, arg_index: usize) -> Option<
         syn::Type::Path(ty_path) => Some(ty_path),
         _ => None,
     }?;
+    get_type_param_from_type(ty_path, arg_index)
+}
+
+fn get_type_param_from_type<'a>(ty_path: &'a syn::TypePath, arg_index: usize) -> Option<&'a syn::TypePath> {
     let last_segment = if let Some(seg) = ty_path.path.segments.last() {
         Some(seg)
     } else {
@@ -419,7 +417,7 @@ fn implement_lexer_methods<'a>(
                 }
             }
 
-            fn next_token(&mut self) -> Result<Option<Self::Token>, ::gerana::ParseError<Self::Error>> {
+            fn next_token(&mut self) -> Result<Option<Self::Terminal>, ::gerana::ParseError<Self::Error>> {
                 self
                 .#lexer
                 .next()
@@ -491,7 +489,7 @@ fn implement_lexer_methods<'a>(
                 self.current_lexer = i;
             }
 
-            fn next_token(&mut self) -> Result<Option<Self::Token>, ::gerana::ParseError<Self::Error>> {
+            fn next_token(&mut self) -> Result<Option<Self::Terminal>, ::gerana::ParseError<Self::Error>> {
                 let output = match self.current_lexer {
                     #(#next_token_lexer_arms),*,
                     _ => unreachable!("parser has no {}-th lexer", self.current_lexer),

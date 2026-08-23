@@ -61,9 +61,9 @@ impl<E> ParseError<E> {
 /// Trait implemented for a generated parser.
 /// 
 /// Use the #[derive(Parser)] attribute on your struct. It must contain three named fields:
-/// - A `symbol_stack: Vec<S>`, where `S` defines [Self::Symbol];
+/// - A `lexer: logos::Lexer<'s, T>`, where `T` defines [Self::Terminal];
+/// - A `symbol_stack: Vec<Symbol<V, T>>`, where `V` defines [Self::Variable];
 /// - A `state_stack: Vec<usize>`;
-/// - A `lexer: logos::Lexer<'s, T>`, where `T` defines [Self::Token];
 /// 
 /// Each of these fields may have another name if they have an attribute that define their role,
 /// i.e., `#[gerana(symbol_stack)]`, `#[gerana(state_stack)]` and `#[gerana(lexer)]`.
@@ -72,8 +72,8 @@ impl<E> ParseError<E> {
 /// 
 /// To define grammar rules for the new parser, each rule must be specified by the `#[rule(...)]`
 /// attribute on the struct. Symbols inside the rule can be either variables or terminals, where
-/// variables are represented by identifiers that should match a [Self::Symbol] variant, and
-/// terminals are represented by a colon followed by an identifier that should match a [Self::Token]
+/// variables are represented by identifiers that should match a [Self::Variable] variant, and
+/// terminals are represented by a colon followed by an identifier that should match a [Self::Terminal]
 /// variant. E.g., `E` is a variable while `:Plus` is a terminal.
 /// 
 /// Variables inside the body of a production rule must be followed by a parenthesized 
@@ -106,22 +106,31 @@ impl<E> ParseError<E> {
 /// with the first lexer set as the default.
 /// 
 /// The tokens produced by the remaining lexers must be convertible to the token type of the default
-/// lexer. That is, for every lexer of type `logos::Lexer<'s, T>`, [Self::Token] has to implement
+/// lexer. That is, for every lexer of type `logos::Lexer<'s, T>`, [Self::Terminal] has to implement
 /// `From<T>`.
 pub trait Parser<'s> {
-    type Token: Logos<'s, Source = str> + Describe + TryFrom<Self::Symbol>;
-    type Symbol: From<Self::Token>;
-    type Output;
+    type Terminal: Logos<'s, Source = str> + Terminal;
+    type Variable: Variable;
     type Error: Error;
 
     fn new(source: &'s str) -> Self;
-    fn parse(self) -> Result<Self::Output, ParseError<Self::Error>>;
+    fn parse(self) -> Result<<Self::Variable as Variable>::Output, ParseError<Self::Error>>;
     fn set_lexer(&mut self, i: usize);
-    fn next_token(&mut self) -> Result<Option<Self::Token>, ParseError<Self::Error>>;
+    fn next_token(&mut self) -> Result<Option<Self::Terminal>, ParseError<Self::Error>>;
     fn slice(&self) -> &'s str;
     fn span(&self) -> std::ops::Range<usize>;
 }
 
-pub trait Describe {
+#[derive(Debug, Clone)]
+pub enum Symbol<V, T> {
+    Var(V),
+    Term(T),
+}
+
+pub trait Terminal {
     fn describe(variant: &'static str) -> &'static str;
+}
+
+pub trait Variable {
+    type Output;
 }
