@@ -2,11 +2,6 @@ use gerana::{Describe, Parser};
 use gerana_derive::Parser;
 use logos::{Lexer, Logos};
 use std::error::Error;
-use thiserror::Error;
-
-#[derive(Error, Debug)]
-#[error("never")]
-pub struct SampleError;
 
 #[derive(Debug, Clone, Logos)]
 #[logos(skip r"[ \t]+")]
@@ -103,7 +98,6 @@ impl std::fmt::Display for Expr {
 
 #[derive(Parser, Debug)]
 #[output(Expr)]
-#[error(SampleError)]
 #[rule(E => E(a) :Plus T(b) { a + b } )]
 #[rule(E => T(a) { a } )]
 #[rule(T => T(a) :Times F(b) { a * b } )]

@@ -62,7 +62,7 @@ pub fn derive_parser(ast: &syn::DeriveInput) -> syn::Result<TokenStream> {
     let error_ty = if let Some(e) = get_declared_param_type(ast, "error").transpose()? {
         e.to_token_stream()
     } else {
-        quote!(Box<dyn ::std::error::Error>)
+        quote!(::gerana::NoError)
     };
 
     let lexer_impls = implement_lexer_methods(&lexers, lt);

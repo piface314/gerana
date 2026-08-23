@@ -11,6 +11,10 @@ pub enum ParseError<E> {
     Other(#[source] E),
 }
 
+#[derive(Error, Clone, Copy, Debug)]
+#[error("this error should never happen")]
+pub struct NoError;
+
 impl<E> ParseError<E> {
     pub fn scan(slice: impl AsRef<str>) -> Self {
         Self::Scan { slice: slice.as_ref().to_string() }
