@@ -18,9 +18,10 @@ include = [
 
 [package]
 name = "gerana"
+description = "A basic SLR parser generator"
 version = "0.1.0"
 edition = "2024"
-authros = ["piface314"]
+authors = ["piface314"]
 
 [dependencies]
 gerana_derive = { path = "./gerana_derive" }
