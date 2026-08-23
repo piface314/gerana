@@ -525,6 +525,14 @@ impl<'r> SlrTable<'r> {
             }
         }
     }
+
+    pub fn expected_inputs(&self) -> impl Iterator<Item = (usize, Vec<&str>)> {
+        let mut state_expected = HashMap::<usize, Vec<&str>>::new();
+        for ((s, t), _) in self.action.iter() {
+            state_expected.entry(*s).or_default().push(*t);
+        }
+        state_expected.into_iter()
+    }
 }
 
 impl SlrAction {

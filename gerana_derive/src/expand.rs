@@ -66,7 +66,6 @@ pub fn derive_parser(ast: &syn::DeriveInput) -> syn::Result<TokenStream> {
     };
 
     let lexer_impls = implement_lexer_methods(&lexers, lt);
-    let default_lexer = lexers[0];
     let start_var = &grammar.rules[0].head_ident;
 
     let actions = slr_table.action.iter().map(|((s, t), action)| {
@@ -151,7 +150,7 @@ pub fn derive_parser(ast: &syn::DeriveInput) -> syn::Result<TokenStream> {
             type Output = #output_ty;
             type Error = #error_ty;
 
-            fn new(source: &'s <Self::Token as ::logos::Logos<'s>>::Source) -> Self {
+            fn new(source: &#lt str) -> Self {
                 Self {
                     #symbol_stack: Vec::new(),
                     #state_stack: vec![0],
@@ -167,14 +166,14 @@ pub fn derive_parser(ast: &syn::DeriveInput) -> syn::Result<TokenStream> {
                     match (state, token.as_ref()) {
                         #(#actions)*
                         _ => return Err(
-                            ::gerana::ParseError::syntax(src, self.span().start)
+                            ::gerana::ParseError::syntax(self.span())
                         ),
                     }
                 }
                 if let Some(#symbol_ty::#start_var(out)) = self.#symbol_stack.pop() {
                     Ok(out)
                 } else {
-                    Err(::gerana::ParseError::syntax(src, self.span().start))
+                    Err(::gerana::ParseError::syntax(self.span()))
                 }
             }
 
@@ -372,7 +371,7 @@ fn implement_lexer_methods<'a>(
                 self
                 .#lexer
                 .next()
-                .map(|r| r.map_err(|_| ::gerana::ParseError::scan(self.slice())))
+                .map(|r| r.map_err(|_| ::gerana::ParseError::scan(self.span())))
                 .transpose()
             }
 
@@ -406,7 +405,7 @@ fn implement_lexer_methods<'a>(
                     #i => self
                         .#lexer
                         .next()
-                        .map(|r| r.map_err(|_| ::gerana::ParseError::scan(self.#lexer.slice())))
+                        .map(|r| r.map_err(|_| ::gerana::ParseError::scan(self.#lexer.span())))
                 }
             } else {
                 quote! {
@@ -414,7 +413,7 @@ fn implement_lexer_methods<'a>(
                         .#lexer
                         .next()
                         .map(|r|
-                            r.map_err(|_| ::gerana::ParseError::scan(self.#lexer.slice()))
+                            r.map_err(|_| ::gerana::ParseError::scan(self.#lexer.span()))
                             .map(|t| t.into())
                         )
                 }

@@ -1,66 +1,118 @@
+use core::ops::Range;
 use logos::Logos;
+use std::error::Error;
 use thiserror::Error;
 
+/// Error type returned by the parser.
+///
+/// Besides the two default error variants, the `Other` variant is specific to the
+/// generated parser.
 #[derive(Debug, Clone, Error)]
 pub enum ParseError<E> {
-    #[error("invalid input {slice:?}")]
-    Scan { slice: String },
-    #[error("syntax error{}:\n{desc}", expected.as_ref().map(|e| format!(", expected {e}")).unwrap_or_default())]
-    Syntax { desc: String, expected: Option<String> },
+    /// A scan error happens when the lexer encounters invalid input in the source.
+    #[error("invalid input at {at:?}")]
+    Scan { at: Range<usize> },
+    /// A syntax error happens when the parser encounters no valid action for an input token.
+    #[error("syntax error at {at:?}{}", Self::display_expected(&expected))]
+    Syntax { at: Range<usize>, expected: Vec<&'static str> },
+    /// A custom error that may be emitted by the semantic actions of the parser.
     #[error("{0}")]
     Other(#[source] E),
 }
 
+/// A default error type for the [ParseError::Other] variant, when the parser
+/// has no fallible semantic action, and thus does not need to configure a
+/// custom error type.
 #[derive(Error, Clone, Copy, Debug)]
 #[error("this error should never happen")]
 pub struct NoError;
 
 impl<E> ParseError<E> {
-    pub fn scan(slice: impl AsRef<str>) -> Self {
-        Self::Scan { slice: slice.as_ref().to_string() }
+    pub fn scan(at: Range<usize>) -> Self {
+        Self::Scan { at }
     }
 
-    pub fn syntax_expecting(expected: &str, src: &str, i: usize) -> Self {
-        Self::Syntax {
-            desc: str_excerpt(10, i, src),
-            expected: Some(expected.to_string()),
+    pub fn syntax_expecting(
+        expected: impl IntoIterator<Item = &'static str>,
+        at: Range<usize>,
+    ) -> Self {
+        Self::Syntax { at, expected: expected.into_iter().collect() }
+    }
+
+    pub fn syntax(at: Range<usize>) -> Self {
+        Self::Syntax { at, expected: Default::default() }
+    }
+
+    fn display_expected(expected: &[&'static str]) -> String {
+        if expected.is_empty() {
+            String::new()
+        } else if expected.len() == 1 {
+            format!(", expected {}", expected[0])
+        } else {
+            let last = expected.last().unwrap();
+            format!(
+                ", expected {} or {last}",
+                &expected[0..expected.len() - 1].join(", ")
+            )
         }
     }
-
-    pub fn syntax(src: &str, i: usize) -> Self {
-        Self::Syntax { desc: str_excerpt(10, i, src), expected: None }
-    }
 }
 
-fn str_excerpt(n: usize, index: usize, src: &str) -> String {
-    let n_start = n / 2;
-    let n_end = n - n_start;
-    let mut start = index.saturating_sub(n_start); // i - st = nst
-    let mut end = index.saturating_add(n_end).clamp(0, src.len());
-    while start > 0 && !src.is_char_boundary(start) {
-        start -= 1;
-    }
-    while end < src.len() && !src.is_char_boundary(end) {
-        end += 1;
-    }
-    let prefix = if start > 0 { "..." } else { "" };
-    let suffix = if end < src.len() { "..." } else { "" };
-    let padding = " ".repeat(
-        prefix.len()
-            + src[start..]
-                .char_indices()
-                .take_while(|(i, _)| *i < index - start)
-                .count(),
-    );
-    let excerpt = format!("{prefix}{}{suffix}\n{padding}^", &src[start..end]);
-    excerpt
-}
-
+/// Trait implemented for a generated parser.
+/// 
+/// Use the #[derive(Parser)] attribute on your struct. It must contain three named fields:
+/// - A `symbol_stack: Vec<S>`, where `S` defines [Self::Symbol];
+/// - A `state_stack: Vec<usize>`;
+/// - A `lexer: logos::Lexer<'s, T>`, where `T` defines [Self::Token];
+/// 
+/// Each of these fields may have another name if they have an attribute that define their role,
+/// i.e., `#[gerana(symbol_stack)]`, `#[gerana(state_stack)]` and `#[gerana(lexer)]`.
+/// 
+/// ## Grammar
+/// 
+/// To define grammar rules for the new parser, each rule must be specified by the `#[rule(...)]`
+/// attribute on the struct. Symbols inside the rule can be either variables or terminals, where
+/// variables are represented by identifiers that should match a [Self::Symbol] variant, and
+/// terminals are represented by a colon followed by an identifier that should match a [Self::Token]
+/// variant. E.g., `E` is a variable while `:Plus` is a terminal.
+/// 
+/// Variables inside the body of a production rule must be followed by a parenthesized 
+/// binding, so that whatever has been produced by that variable in a previous reduction can be 
+/// referenced and used inside the semantic action for that rule. Variables at the head position
+/// have no binding. Terminals may or may not have a following binding. Use a binding if you need 
+/// to extract data from the token.
+/// 
+/// After the rule body, a semantic action must be specified, which defines what is produced
+/// by the head when the rule is reduced. The semantic action must be an expression inside brackets.
+/// 
+/// The head of the first rule is defined as the starting variable for the grammar.
+/// 
+/// ### Example grammar
+/// 
+/// ```
+/// #[rule(E => E(a) :Plus T(b) { a + b } )]
+/// #[rule(E => T(a) { a } )]
+/// #[rule(T => T(a) :Times F(b) { a * b } )]
+/// #[rule(T => F(a) { a } )]
+/// #[rule(F => :ParenOp E(a) :ParenCl { a } )]
+/// #[rule(F => :Id(a) { Expr::Id(a) } )]
+/// ```
+/// 
+/// ## Lexers
+/// 
+/// You may define multiple lexers, and use the [Self::set_lexer] method inside semantic actions
+/// to change which one is currently being used. In multi-lexer parsers, the struct must contain
+/// a `current_lexer: usize` field, and they are identified by the order they appear in the struct,
+/// with the first lexer set as the default.
+/// 
+/// The tokens produced by the remaining lexers must be convertible to the token type of the default
+/// lexer. That is, for every lexer of type `logos::Lexer<'s, T>`, [Self::Token] has to implement
+/// `From<T>`.
 pub trait Parser<'s> {
     type Token: Logos<'s, Source = str> + Describe + TryFrom<Self::Symbol>;
     type Symbol: From<Self::Token>;
     type Output;
-    type Error: std::fmt::Display;
+    type Error: Error;
 
     fn new(source: &'s str) -> Self;
     fn parse(self) -> Result<Self::Output, ParseError<Self::Error>>;
