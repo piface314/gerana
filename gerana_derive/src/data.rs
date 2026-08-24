@@ -531,6 +531,9 @@ impl<'r> SlrTable<'r> {
         for ((s, t), _) in self.action.iter() {
             state_expected.entry(*s).or_default().push(*t);
         }
+        for (_, inputs) in state_expected.iter_mut() {
+            inputs.sort_by(|a, b| b.cmp(a));
+        }
         state_expected.into_iter()
     }
 }
