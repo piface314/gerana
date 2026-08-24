@@ -1,5 +1,4 @@
-use gerana::{Parser, Symbol};
-use gerana_derive::{Parser, Terminal, Variable};
+use gerana::{Parser, Symbol, Terminal, Variable};
 use logos::{Lexer, Logos};
 use std::error::Error;
 

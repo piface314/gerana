@@ -1,4 +1,5 @@
 use core::ops::Range;
+pub use gerana_derive::{Parser, Terminal, Variable};
 use logos::Logos;
 use std::error::Error;
 use thiserror::Error;
@@ -59,36 +60,36 @@ impl<E> ParseError<E> {
 }
 
 /// Trait implemented for a generated parser.
-/// 
+///
 /// Use the #[derive(Parser)] attribute on your struct. It must contain three named fields:
 /// - A `lexer: logos::Lexer<'s, T>`, where `T` defines [Self::Terminal];
 /// - A `symbol_stack: Vec<Symbol<V, T>>`, where `V` defines [Self::Variable];
 /// - A `state_stack: Vec<usize>`;
-/// 
+///
 /// Each of these fields may have another name if they have an attribute that define their role,
 /// i.e., `#[gerana(symbol_stack)]`, `#[gerana(state_stack)]` and `#[gerana(lexer)]`.
-/// 
+///
 /// ## Grammar
-/// 
+///
 /// To define grammar rules for the new parser, each rule must be specified by the `#[rule(...)]`
 /// attribute on the struct. Symbols inside the rule can be either variables or terminals, where
 /// variables are represented by identifiers that should match a [Self::Variable] variant, and
 /// terminals are represented by a colon followed by an identifier that should match a [Self::Terminal]
 /// variant. E.g., `E` is a variable while `:Plus` is a terminal.
-/// 
-/// Variables inside the body of a production rule must be followed by a parenthesized 
-/// binding, so that whatever has been produced by that variable in a previous reduction can be 
+///
+/// Variables inside the body of a production rule must be followed by a parenthesized
+/// binding, so that whatever has been produced by that variable in a previous reduction can be
 /// referenced and used inside the semantic action for that rule. Variables at the head position
-/// have no binding. Terminals may or may not have a following binding. Use a binding if you need 
+/// have no binding. Terminals may or may not have a following binding. Use a binding if you need
 /// to extract data from the token.
-/// 
+///
 /// After the rule body, a semantic action must be specified, which defines what is produced
 /// by the head when the rule is reduced. The semantic action must be an expression inside brackets.
-/// 
+///
 /// The head of the first rule is defined as the starting variable for the grammar.
-/// 
+///
 /// ### Example grammar
-/// 
+///
 /// ```
 /// #[rule(E => E(a) :Plus T(b) { a + b } )]
 /// #[rule(E => T(a) { a } )]
@@ -97,14 +98,14 @@ impl<E> ParseError<E> {
 /// #[rule(F => :ParenOp E(a) :ParenCl { a } )]
 /// #[rule(F => :Id(a) { Expr::Id(a) } )]
 /// ```
-/// 
+///
 /// ## Lexers
-/// 
+///
 /// You may define multiple lexers, and use the [Self::set_lexer] method inside semantic actions
 /// to change which one is currently being used. In multi-lexer parsers, the struct must contain
 /// a `current_lexer: usize` field, and they are identified by the order they appear in the struct,
 /// with the first lexer set as the default.
-/// 
+///
 /// The tokens produced by the remaining lexers must be convertible to the token type of the default
 /// lexer. That is, for every lexer of type `logos::Lexer<'s, T>`, [Self::Terminal] has to implement
 /// `From<T>`.
