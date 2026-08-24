@@ -13,3 +13,19 @@ pub fn parser(input: TokenStream) -> TokenStream {
         .unwrap_or_else(syn::Error::into_compile_error)
         .into()
 }
+
+#[proc_macro_derive(Variable, attributes(gerana))]
+pub fn variable(input: TokenStream) -> TokenStream {
+    let ast: DeriveInput = parse_macro_input!(input);
+    expand::derive_variable(&ast)
+        .unwrap_or_else(syn::Error::into_compile_error)
+        .into()
+}
+
+#[proc_macro_derive(Terminal, attributes(gerana))]
+pub fn terminal(input: TokenStream) -> TokenStream {
+    let ast: DeriveInput = parse_macro_input!(input);
+    expand::derive_terminal(&ast)
+        .unwrap_or_else(syn::Error::into_compile_error)
+        .into()
+}

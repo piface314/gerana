@@ -6,19 +6,35 @@ use proc_macro2::TokenStream;
 use quote::{quote, ToTokens};
 use syn::Token;
 
-struct NamedParam {
+struct NamedTyParam {
     name: syn::Ident,
     #[allow(unused)]
     eq_token: Token![=],
     ty: syn::TypePath,
 }
 
-impl syn::parse::Parse for NamedParam {
+impl syn::parse::Parse for NamedTyParam {
     fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
         let name = input.parse()?;
         let eq_token = input.parse()?;
         let ty = input.parse()?;
         Ok(Self { name, eq_token, ty })
+    }
+}
+
+struct NamedStrParam {
+    name: syn::Ident,
+    #[allow(unused)]
+    eq_token: Token![=],
+    value: syn::LitStr,
+}
+
+impl syn::parse::Parse for NamedStrParam {
+    fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
+        let name = input.parse()?;
+        let eq_token = input.parse()?;
+        let value = input.parse()?;
+        Ok(Self { name, eq_token, value })
     }
 }
 
@@ -109,30 +125,28 @@ pub fn derive_parser(ast: &syn::DeriveInput) -> syn::Result<TokenStream> {
     });
 
     let reductions = grammar.rules.iter().enumerate().map(|(rule_index, rule)| {
-        let bindings = rule.body.iter().rev().map(|symbol| {
-            match symbol {
-                Symbol::Term(terminal) => {
-                    if let Some(binding) = terminal.binding.as_ref() {
-                        let terminal_ident = &terminal.name_ident;
-                        quote! {
-                            let #binding = match self.#symbol_stack.pop().unwrap() {
-                                ::gerana::Symbol::Term(#token_ty::#terminal_ident(x)) => x,
-                                _ => unreachable!("invalid token"),
-                            };
-                        }
-                    } else {
-                        quote!(self.#symbol_stack.pop();)
-                    }
-                }
-                Symbol::Var(variable) => {
-                    let var_ident = &variable.name_ident;
-                    let binding = &variable.binding;
+        let bindings = rule.body.iter().rev().map(|symbol| match symbol {
+            Symbol::Term(terminal) => {
+                if let Some(binding) = terminal.binding.as_ref() {
+                    let terminal_ident = &terminal.name_ident;
                     quote! {
                         let #binding = match self.#symbol_stack.pop().unwrap() {
-                            ::gerana::Symbol::Var(#var_ty::#var_ident(x)) => x,
-                            _ => unreachable!("invalid variable"),
+                            ::gerana::Symbol::Term(#token_ty::#terminal_ident(x)) => x,
+                            _ => unreachable!("invalid token"),
                         };
                     }
+                } else {
+                    quote!(self.#symbol_stack.pop();)
+                }
+            }
+            Symbol::Var(variable) => {
+                let var_ident = &variable.name_ident;
+                let binding = &variable.binding;
+                quote! {
+                    let #binding = match self.#symbol_stack.pop().unwrap() {
+                        ::gerana::Symbol::Var(#var_ty::#var_ident(x)) => x,
+                        _ => unreachable!("invalid variable"),
+                    };
                 }
             }
         });
@@ -371,7 +385,7 @@ fn get_declared_param_type(
     param: &str,
 ) -> syn::Result<Option<syn::TypePath>> {
     for att in iter_attrs(&ast.attrs) {
-        let np = att.parse_args::<NamedParam>()?;
+        let np = att.parse_args::<NamedTyParam>()?;
         if np.name == param {
             return Ok(Some(np.ty));
         }
@@ -387,7 +401,10 @@ fn get_type_param_from_field<'a>(f: &'a syn::Field, arg_index: usize) -> Option<
     get_type_param_from_type(ty_path, arg_index)
 }
 
-fn get_type_param_from_type<'a>(ty_path: &'a syn::TypePath, arg_index: usize) -> Option<&'a syn::TypePath> {
+fn get_type_param_from_type<'a>(
+    ty_path: &'a syn::TypePath,
+    arg_index: usize,
+) -> Option<&'a syn::TypePath> {
     let last_segment = if let Some(seg) = ty_path.path.segments.last() {
         Some(seg)
     } else {
@@ -523,7 +540,7 @@ fn error_arms<'r>(
             if input == "$" {
                 quote!("end of input")
             } else {
-                quote!(#token_ty::describe(#input))
+                quote!(<#token_ty as ::gerana::Terminal>::describe(#input))
             }
         });
         quote! {
@@ -532,4 +549,106 @@ fn error_arms<'r>(
             }
         }
     })
+}
+
+pub fn derive_variable(ast: &syn::DeriveInput) -> syn::Result<TokenStream> {
+    let data_enum = match &ast.data {
+        syn::Data::Enum(data_enum) => data_enum,
+        _ => return Err(syn::Error::new_spanned(ast, "expected an enum")),
+    };
+    let first_var = data_enum
+        .variants
+        .first()
+        .ok_or_else(|| syn::Error::new_spanned(ast, "expected at least one variant"))?;
+    if first_var.fields.len() != 1 {
+        return Err(syn::Error::new_spanned(
+            &first_var.fields,
+            "only a single unnamed field is supported",
+        ));
+    }
+    let first_field = first_var.fields.iter().next().expect("len already checked");
+    let ty = &ast.ident;
+    let generics = &ast.generics;
+    let output_ty = &first_field.ty;
+    Ok(quote! {
+        impl #generics ::gerana::Variable for #ty #generics {
+            type Output = #output_ty;
+        }
+    })
+}
+
+pub fn derive_terminal(ast: &syn::DeriveInput) -> syn::Result<TokenStream> {
+    let data_enum = match &ast.data {
+        syn::Data::Enum(data_enum) => data_enum,
+        _ => return Err(syn::Error::new_spanned(ast, "expected an enum")),
+    };
+    let descriptions: Vec<_> = data_enum
+        .variants
+        .iter()
+        .map(get_terminal_desc)
+        .collect::<Result<_, _>>()?;
+    let desc_arms = descriptions
+        .into_iter()
+        .map(|(var, desc)| quote!(#var => #desc));
+    let ty = &ast.ident;
+    let generics = &ast.generics;
+    Ok(quote! {
+        impl #generics ::gerana::Terminal for #ty #generics {
+            fn describe(var: &'static str) -> &'static str {
+                match var {
+                    #(#desc_arms),*,
+                    _ => panic!("{} has no {var} variant", stringify!(#ty))
+                }
+            }
+        }
+    })
+}
+
+struct FirstLit(syn::LitStr);
+
+impl syn::parse::Parse for FirstLit {
+    fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
+        let lit = input.parse()?;
+        while !input.is_empty() {
+            let _ = input.step(|cursor| {
+                let (_, next) = cursor.token_tree().unwrap();
+                Ok(((), next))
+            });
+        }
+        Ok(Self(lit))
+    }
+}
+
+fn get_terminal_desc(variant: &syn::Variant) -> syn::Result<(String, String)> {
+    if let Some(token_att) = variant
+        .attrs
+        .iter()
+        .filter(|att| att.path().is_ident("token"))
+        .next()
+    {
+        let FirstLit(desc) = token_att.parse_args::<FirstLit>()?;
+        Ok((variant.ident.to_string(), format!("`{}`", desc.value())))
+    } else {
+        let mut descs = iter_attrs(&variant.attrs)
+            .map(|att| att.parse_args::<NamedStrParam>())
+            .filter(|r| r.as_ref().map(|np| np.name == "desc").unwrap_or(false))
+            .map(|r| r.map(|np| np.value.value()))
+            .collect::<Result<Vec<_>, _>>()?;
+        if descs.is_empty() {
+            Err(syn::Error::new_spanned(
+                variant,
+                "no description for token, specify one with #[gerana(desc = \"...\")]",
+            ))
+        } else if descs.len() > 1 {
+            Err(syn::Error::new_spanned(
+                variant,
+                "a single description must be specified",
+            ))
+        } else {
+            Ok((
+                variant.ident.to_string(),
+                descs.pop().expect("len already checked"),
+            ))
+        }
+    }
 }

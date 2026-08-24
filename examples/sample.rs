@@ -1,9 +1,9 @@
-use gerana::{Parser, Symbol, Terminal, Variable};
-use gerana_derive::Parser;
+use gerana::{Parser, Symbol};
+use gerana_derive::{Parser, Terminal, Variable};
 use logos::{Lexer, Logos};
 use std::error::Error;
 
-#[derive(Debug, Clone, Logos)]
+#[derive(Debug, Clone, Logos, Terminal)]
 #[logos(skip r"[ \t]+")]
 enum SampleToken {
     #[token("+")]
@@ -14,21 +14,9 @@ enum SampleToken {
     ParenOp,
     #[token(")")]
     ParenCl,
+    #[gerana(desc = "an identifier")]
     #[regex("[a-z][a-z0-9-]*|`([^`]|``)*`", unescape_ident, ignore(case))]
     Id(String),
-}
-
-impl Terminal for SampleToken {
-    fn describe(variant: &'static str) -> &'static str {
-        match variant {
-            "Plus" => "`+`",
-            "Times" => "`x`",
-            "ParenOp" => "`(`",
-            "ParenCl" => "`)`",
-            "Id" => "an identifier",
-            _ => "",
-        }
-    }
 }
 
 fn unescape_ident(lex: &Lexer<SampleToken>) -> String {
@@ -41,15 +29,11 @@ fn unescape_ident(lex: &Lexer<SampleToken>) -> String {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Variable)]
 enum SampleVar {
     E(Expr),
     T(Expr),
     F(Expr),
-}
-
-impl Variable for SampleVar {
-    type Output = Expr;
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -101,7 +85,9 @@ fn main() -> Result<(), Box<dyn Error>> {
     println!("{e1:?}");
     let e2 = SampleParser::new("a + b * c").parse()?;
     println!("{e2:?}");
-    let e3 = SampleParser::new("a + b d").parse().inspect_err(|e| eprintln!("{e}"));
+    let e3 = SampleParser::new("a + b +")
+        .parse()
+        .inspect_err(|e| eprintln!("{e}"));
     println!("{e3:?}");
     Ok(())
 }
