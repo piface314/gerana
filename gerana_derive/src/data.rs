@@ -462,7 +462,7 @@ pub struct SlrTable<'r> {
     pub goto: HashMap<(usize, &'r str), usize>,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SlrAction {
     Shift(usize),
     Reduce(usize),
@@ -513,6 +513,7 @@ impl<'r> SlrTable<'r> {
     fn set_action(&mut self, i: usize, t: &'r str, action: SlrAction) -> syn::Result<()> {
         match self.action.insert((i, t), action) {
             None => Ok(()),
+            Some(prev_action) if action == prev_action => Ok(()),
             Some(prev_action) => {
                 let msg = if prev_action.is_reduce() && action.is_reduce() {
                     "grammar contains reduce/reduce conflict"

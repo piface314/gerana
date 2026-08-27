@@ -19,7 +19,7 @@ include = [
 [package]
 name = "gerana"
 description = "A basic SLR parser generator"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 authors = ["piface314"]
 
