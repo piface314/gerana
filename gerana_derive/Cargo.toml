@@ -3,10 +3,11 @@ name = "gerana_derive"
 version = "0.1.0"
 description = ""
 repository = "https://github.com/piface314/gerana/tree/main/gerana_derive"
-license.workspace = true
+license-file.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 include.workspace = true
+readme.workspace = true
 
 [lib]
 proc-macro = true
