@@ -15,6 +15,11 @@ include = [
     "benches/**/*",
     "examples/**/*",
 ]
+license-file = "LICENSE"
+repository = "https://github.com/piface314/gerana/"
+readme = "README.md"
+keywords = ["parser", "generatora"]
+categories = ["parsing", "compilers"]
 
 [package]
 name = "gerana"
@@ -22,13 +27,13 @@ description = "A basic SLR parser generator"
 version = "0.1.1"
 edition = "2024"
 authors = ["piface314"]
-license-file = "LICENSE"
-repository = "https://github.com/piface314/gerana/"
-readme = "README.md"
-keywords = ["parser", "generatora"]
-categories = ["parsing", "compilers"]
+license-file.workspace = true
+readme.workspace = true
+repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
 
 [dependencies]
-gerana_derive = { path = "./gerana_derive" }
+gerana_derive = { path = "./gerana_derive", version = "0.1.0" }
 logos = "0.16.1"
 thiserror = "2.0.20"
